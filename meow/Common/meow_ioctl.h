@@ -26,6 +26,9 @@ static const auto MEOW_DEVICE_CODE = 0x8000ul;
 static const auto MEOW_IOCTL_DISARM =
     CTL_CODE(MEOW_DEVICE_CODE, 0x0800, /* 0x0800-0x0FFF */
              METHOD_BUFFERED, FILE_WRITE_ACCESS);
+static const auto MEOW_IOCTL_UNSIGN =
+    CTL_CODE(MEOW_DEVICE_CODE, 0x0C00, /* 0x0800-0x0FFF */
+             METHOD_BUFFERED, FILE_WRITE_ACCESS);
 
 ////////////////////////////////////////////////////////////////////////////////
 //
