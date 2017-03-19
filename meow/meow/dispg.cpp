@@ -380,7 +380,7 @@ _Use_decl_annotations_ EXTERN_C void DispgDSETermination() {
 	LOG_DEBUG("*g_Dispgpg_CiOptions [restored] = %llx", *(g_Dispgpg_CiOptions));
 #else
 	*(g_Dispgpg_CiOptions) = g_bu_Dispgpg_CiOptions;
-	LOG_DEBUG("*g_Dispgpg_CiOptions [restored] = %x", *((UINT*)g_Dispgpg_CiOptions));
+	LOG_DEBUG("*g_Dispgpg_CiOptions [restored] = %x", *(g_Dispgpg_CiOptions));
 #endif
 
 	LOG_INFO("DSE has been restored.");
