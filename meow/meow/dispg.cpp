@@ -380,7 +380,7 @@ _Use_decl_annotations_ EXTERN_C void DispgDSETermination() {
 	LOG_DEBUG("*g_Dispgpg_CiOptions [restored] = %llx", *(g_Dispgpg_CiOptions));
 #else
 	*(g_Dispgpg_CiOptions) = g_bu_Dispgpg_CiOptions;
-	LOG_DEBUG("*g_Dispgpg_CiOptions [restored] = %x", *((UINT*)g_Dispgpg_CiOptions));
+	LOG_DEBUG("*g_Dispgpg_CiOptions [restored] = %x", *(g_Dispgpg_CiOptions));
 #endif
 
 	LOG_INFO("DSE has been restored.");
@@ -390,7 +390,6 @@ _Use_decl_annotations_ EXTERN_C void DispgDSETermination() {
 // information stored in the registry.
 _Use_decl_annotations_ EXTERN_C NTSTATUS DispgDisableDSE() {
 
-	// not protected by PatchGuard under w62
 	/*if (!g_DispgpIsAlreadyDisarmed) {
 		LOG_DEBUG("!g_DispgpIsAlreadyDisarmed");
 		return STATUS_REQUEST_CANCELED;
@@ -969,26 +968,8 @@ const wchar_t *RegistryKey) {
 	PAGED_CODE();
 	auto status = STATUS_UNSUCCESSFUL;
 
-	UCHAR *pSeGetImageRequiredSigningLevel = nullptr;
 	UCHAR *pSeILSigningPolicy = nullptr;
 	UCHAR *pg_CiOptions = nullptr;
-
-#if _AMD64_
-	UCHAR *cmp1 = nullptr;
-	UCHAR *cmp2 = nullptr;
-	INT32 relCMP2;
-#else
-#if _ARM_
-	UCHAR *cmp = nullptr;
-	UCHAR *ldr = nullptr;
-	UINT16 numLDR = 0;
-	UINT16 numCMP = 0;
-	UINT16 refLDR = 0;
-	UCHAR *dcd = nullptr;
-#else
-#error "unknown architecture"
-#endif
-#endif
 
 	// Define a list of required symbols, variables to save the value and
 	// conditions to determine if it is needed or not.
@@ -999,8 +980,8 @@ const wchar_t *RegistryKey) {
 	// clang-format off
 	const SymbolSet requireSymbols[] = {
 		{
-			L"ntoskrnl!SeGetImageRequiredSigningLevel",
-			&pSeGetImageRequiredSigningLevel, always,
+			L"ntoskrnl!SeILSigningPolicy",
+			&pSeILSigningPolicy, always,
 		},
 		{
 			L"ci!g_CiOptions",
@@ -1025,116 +1006,6 @@ const wchar_t *RegistryKey) {
 
 	// FIXME: sorry, no security yet...
 
-	LOG_DEBUG("pSeGetImageRequiredSigningLevel = %p", pSeGetImageRequiredSigningLevel);
-
-#if _AMD64_
-	// find "41 3A D0" ( == "cmp     dl, r8b")
-	for (auto i = 0; i < 0x38; ++i) {
-		if ((*(pSeGetImageRequiredSigningLevel + i) == 0x41) && (*(pSeGetImageRequiredSigningLevel + i + 1) == 0x3A) && (*(pSeGetImageRequiredSigningLevel + i + 2) == 0xD0)) {
-			cmp1 = (pSeGetImageRequiredSigningLevel + i);
-			LOG_DEBUG("cmp1 = SeGetImageRequiredSigningLevel+0x%llx", (cmp1 - pSeGetImageRequiredSigningLevel));
-			break;
-		}
-	}
-	if (cmp1 == nullptr) {
-		LOG_DEBUG("cmp1 == nullptr");
-		return STATUS_UNSUCCESSFUL;
-	}
-
-	// Zielstruktur sieht so aus:
-	/*
-		cmp     dl, r8b					{Length: 3} // often SeGetImageRequiredSigningLevel+0x13
-		jbe     short loc_uninteresting	{Length: 2}
-		cmp     cs:SeILSigningLevel, 4	{Length: 7} // often SeGetImageRequiredSigningLevel+0x18
-	*/
-	
-	// cmp1+0xB should be "04" (= the ", 4" portion of "cmp     cs:SeILSigningLevel, 4")
-	if ((*(cmp1 + 0xB)) == 0x04) {
-		cmp2 = ((cmp1 + 0xB) - 0x6);
-		LOG_DEBUG("cmp2 = SeGetImageRequiredSigningLevel+0x%llx", (cmp2 - pSeGetImageRequiredSigningLevel));
-	}
-	if (cmp2 == nullptr) {
-		LOG_DEBUG("cmp2 == nullptr");
-		return STATUS_UNSUCCESSFUL;
-	}
-
-	// Die cmp-Anweisung sieht wie folgt aus:
-	/*
-		cmp = "80 3D XX XX XX XX YY"
-			XX XX XX XX => relativer Pointer (vom cmp) + 7
-			YY => Vergleichswert
-	*/
-	
-	relCMP2 = (*((INT32*)(cmp2 + 2)));
-	LOG_DEBUG("relCMP2 = 0x%x", relCMP2);
-
-	pSeILSigningPolicy = ((cmp2 + 7) + relCMP2);
-	LOG_DEBUG("pSeILSigningPolicy = %p", pSeILSigningPolicy);
-#else
-#if _ARM_
-	// find "1B 78 04 2B" ( == "LRDB R3, [R3]"; "CMP R3, #4")
-	// 0x38 wird als maximale Größe der ersten Teilfunktion angenommen
-	for (auto i = 0; i < 0x38; ++i) {
-		if ((*(pSeGetImageRequiredSigningLevel + i) == 0x1B) && (*(pSeGetImageRequiredSigningLevel + i + 1) == 0x78) && (*(pSeGetImageRequiredSigningLevel + i + 2) == 0x04) && (*(pSeGetImageRequiredSigningLevel + i + 3) == 0x2B)) {
-			cmp = (pSeGetImageRequiredSigningLevel + i);
-			LOG_DEBUG("cmp = SeGetImageRequiredSigningLevel+0x%x", (cmp - pSeGetImageRequiredSigningLevel));
-			break;
-		}
-	}
-	if (cmp == nullptr) {
-		LOG_DEBUG("cmp == nullptr");
-		return STATUS_UNSUCCESSFUL;
-	}
-	// Zielstruktur sieht so aus:
-	/*
-		LDR             R3, =SeILSigningPolicy		{Length: 2}
-		LDRB            R3, [R3]					{Length: 2}
-		CMP             R3, #4						{Length: 2}
-	*/
-
-	if ((((UINT16)(cmp - 4)) & 0x4800) != 0) {
-		// got my LDR-cmd
-		ldr = (cmp - 2);
-		LOG_DEBUG("ldr = SeGetImageRequiredSigningLevel+0x%x", (ldr - pSeGetImageRequiredSigningLevel));
-		LOG_DEBUG("*(ldr) = %x", (*((UINT16*)&ldr)));
-	}
-
-	numLDR = ((*((UINT16*)&ldr)) ^ 0x4800); // calculate the final diff 1 [^ = XOR]
-	LOG_DEBUG("numLDR = %x", numLDR);
-	numCMP = ((*((UINT16*)&cmp)) ^ 0x2800); // calculate the final diff 2 [^ = XOR]
-	LOG_DEBUG("numCMP = %x", numCMP);
-
-	// verify the register
-	if ((numCMP & 0x00FF) != 0x04) {
-		// not comparing to "#4" ;-(
-		LOG_DEBUG("(numCMP & 0x00FF) != 0x04");
-		return STATUS_UNSUCCESSFUL;
-	}
-	if ((numCMP & 0xFF00) != (numLDR & 0xFF00)) {
-		// not loading the same register, we're comparing against #4
-		LOG_DEBUG("(numCMP & 0xFF00) != (numLDR & 0xFF00)");
-		return STATUS_UNSUCCESSFUL;
-	}
-	refLDR = (numLDR & 0x00FF); // get the xref
-	LOG_DEBUG("refLDR(raw) = 0x%x", refLDR);
-	refLDR = ((refLDR * 0x4) + 0x2 /* size of the LDR-command */);
-	LOG_DEBUG("refLDR(final) = 0x%x", refLDR);
-
-
-	// read DCD command
-	dcd = (ldr + refLDR);
-	LOG_DEBUG("dcd = SeGetImageRequiredSigningLevel+0x%x", (dcd - pSeGetImageRequiredSigningLevel));
-
-	pSeILSigningPolicy = *((UCHAR**)dcd); // read the final offset
-	LOG_DEBUG("pSeILSigningPolicy = %p", pSeILSigningPolicy);
-
-
-	return STATUS_UNSUCCESSFUL; // FIXME
-#else
-#error "unknown architecture"
-#endif
-#endif
-	
 	if ((pSeILSigningPolicy != nullptr) && (pg_CiOptions != nullptr)) {
 		g_DispgpSeILSigningPolicy = pSeILSigningPolicy;
 #if _AMD64_
@@ -1142,14 +1013,13 @@ const wchar_t *RegistryKey) {
 #else
 		g_Dispgpg_CiOptions = (UINT*)pg_CiOptions;
 #endif
-		
+
 		return STATUS_SUCCESS;
 	}
 	else {
 		return STATUS_DATA_ERROR;
 	}
 }
-
 
 ///////////////////////////////////////////////////////////////////////////////
 //
