@@ -153,22 +153,24 @@ DriverInfoList GetDriverList() {
 std::vector<std::basic_string<TCHAR>> GetRequestedSymbolNames() {
   // clang-format off
   std::vector<std::basic_string<TCHAR>> forAll = {
-      TEXT("ntoskrnl!ExAcquireResourceSharedLite"),
-      TEXT("ntoskrnl!VerifierExAcquireResourceSharedLite"),
-      TEXT("ntoskrnl!KeWaitForSingleObject"),
-      TEXT("ntoskrnl!KeDelayExecutionThread"),
+//      TEXT("ntoskrnl!ExAcquireResourceSharedLite"),
+//      TEXT("ntoskrnl!VerifierExAcquireResourceSharedLite"),
+//      TEXT("ntoskrnl!KeWaitForSingleObject"),
+//      TEXT("ntoskrnl!KeDelayExecutionThread"),
+	  TEXT("ntoskrnl!SeGetImageRequiredSigningLevel"),
+	  TEXT("ci!g_CiOptions"),
   };
   std::vector<std::basic_string<TCHAR>> forX64 = {
-      TEXT("ntoskrnl!KiCommitThreadWait"),
-      TEXT("ntoskrnl!ApiSetpSearchForApiSetHost"),
-      TEXT("ntoskrnl!KiScbQueueScanWorker"), 
-      TEXT("ntoskrnl!CcBcbProfiler"),
+//      TEXT("ntoskrnl!KiCommitThreadWait"),
+//      TEXT("ntoskrnl!ApiSetpSearchForApiSetHost"),
+//      TEXT("ntoskrnl!KiScbQueueScanWorker"), 
+//      TEXT("ntoskrnl!CcBcbProfiler"),
   };
   std::vector<std::basic_string<TCHAR>> forARM = {
-      TEXT("ntoskrnl!KeRemovePriQueue"), 
-      TEXT("ntoskrnl!CmpDelayFreeTMWorker"),
-      TEXT("ntoskrnl!PopPdcSampleIdleTimeouts"),
-      TEXT("ntoskrnl!CcDelayedFlushTimer"),
+//      TEXT("ntoskrnl!KeRemovePriQueue"), 
+//      TEXT("ntoskrnl!CmpDelayFreeTMWorker"),
+//      TEXT("ntoskrnl!PopPdcSampleIdleTimeouts"),
+//      TEXT("ntoskrnl!CcDelayedFlushTimer"),
   };
   // clang-format on
   const auto &arch = (IsX64() ? forX64 : forARM);
