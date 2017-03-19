@@ -157,8 +157,8 @@ std::vector<std::basic_string<TCHAR>> GetRequestedSymbolNames() {
       TEXT("ntoskrnl!VerifierExAcquireResourceSharedLite"),
       TEXT("ntoskrnl!KeWaitForSingleObject"),
       TEXT("ntoskrnl!KeDelayExecutionThread"),
-      TEXT("ntoskrnl!SeGetImageRequiredSigningLevel"),
-      TEXT("ci!g_CiOptions"),
+      TEXT("ntoskrnl!SeILSigningPolicy"),
+      TEXT("ci!g_CiOptionstion"),
   };
   std::vector<std::basic_string<TCHAR>> forX64 = {
       TEXT("ntoskrnl!KiCommitThreadWait"),
