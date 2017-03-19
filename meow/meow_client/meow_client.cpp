@@ -90,6 +90,7 @@ bool AppMain(_In_ const std::vector<std::string> &Args) {
   std::cout << "\n"
             << "Type one of following these commands:\n"
             << "  disarm           # Disarm PatchGuard\n"
+            << "  unsign           # Disable DSE\n"
             << "  load:<dll_path>  # Load the DLL\n"
             << "  exit             # Exit this program\n" << std::endl;
 
@@ -110,6 +111,8 @@ bool ProcessCommand(_In_ const std::string &Command) {
     std::exit(EXIT_SUCCESS);
   } else if (Command == "disarm") {
     return DisarmPatchGuard();
+  } else if (Command == "disarm") {
+    return DisableDSE();
   } else if (std::strncmp(Command.c_str(), "load:", 5) == 0) {
     return LoadDll(Command.c_str() + 5);
   } else {
@@ -142,6 +145,15 @@ bool DisarmPatchGuard() {
     return false;
   }
   return SendIoctlCommand(MEOW_IOCTL_DISARM);
+}
+
+// Disable DSE
+bool DisableDSE() {
+  if (!RegisterSymbolInformation(
+          TEXT("SYSTEM\\CurrentControlSet\\Services\\meow"))) {
+    return false;
+  }
+  return SendIoctlCommand(MEOW_IOCTL_UNSIGN);
 }
 
 // Send an IOCTL command to the meow driver.
