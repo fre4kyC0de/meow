@@ -254,9 +254,9 @@ _Use_decl_annotations_ EXTERN_C static NTSTATUS MeowpIrpIoControlDispatcher(
 
   auto status = STATUS_SUCCESS;
   switch (IoControlCode) {
-/*    case MEOW_IOCTL_DISARM:
+    case MEOW_IOCTL_DISARM:
       status = DispgDisablePatchGuard();
-      break;*/
+      break;
     case MEOW_IOCTL_UNSIGN:
       status = DispgDisableDSE();
       break;
