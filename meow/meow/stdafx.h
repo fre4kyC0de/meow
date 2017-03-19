@@ -114,3 +114,12 @@ inline bool IsX64() {
   return false;
 #endif
 }
+
+// Returns true when it is running on the arm system.
+inline bool IsARM() {
+#ifdef _ARM_
+	return true;
+#else
+	return false;
+#endif
+}
