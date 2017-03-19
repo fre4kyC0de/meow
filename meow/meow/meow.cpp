@@ -164,6 +164,7 @@ _Use_decl_annotations_ EXTERN_C static void MeowpDriverUnload(
   LOG_DEBUG("Being terminated.");
   DBG_BREAK();
 
+  DispgDSETermination();
   DispgTermination();
   LogTermination();
   MeowpTermination(DriverObject);
@@ -255,6 +256,9 @@ _Use_decl_annotations_ EXTERN_C static NTSTATUS MeowpIrpIoControlDispatcher(
   switch (IoControlCode) {
     case MEOW_IOCTL_DISARM:
       status = DispgDisablePatchGuard();
+      break;
+    case MEOW_IOCTL_UNSIGN:
+      status = DispgDisableDSE();
       break;
     default:
       status = STATUS_INVALID_DEVICE_REQUEST;
