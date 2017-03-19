@@ -33,6 +33,10 @@ EXTERN_C void DispgTermination();
 
 EXTERN_C NTSTATUS DispgDisablePatchGuard();
 
+EXTERN_C void DispgDSETermination();
+
+EXTERN_C NTSTATUS DispgDisableDSE();
+
 ////////////////////////////////////////////////////////////////////////////////
 //
 // variables
